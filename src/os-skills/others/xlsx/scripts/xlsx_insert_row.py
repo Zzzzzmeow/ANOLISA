@@ -86,10 +86,11 @@ def find_ws_path(work_dir: str, sheet_name: str | None) -> str:
     for rel in rels_tree.getroot():
         if rel.get("Id") == rid:
             target = rel.get("Target")
-            # Handle absolute paths (starting with /) and relative paths
+            # OPC rels: package-absolute targets start with "/", relative
+            # targets resolve against the source part's directory (xl/).
             if target.startswith("/"):
-                target = target[1:]  # Remove leading /
-            return os.path.join(work_dir, target)
+                return os.path.join(work_dir, target[1:])
+            return os.path.join(work_dir, "xl", target)
 
     print(f"ERROR: Relationship not found: {rid}")
     sys.exit(1)

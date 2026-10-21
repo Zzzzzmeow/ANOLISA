@@ -189,7 +189,9 @@ _JWT_RE = re.compile(
     r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])"
 )
 _API_KEY_RE = re.compile(
-    r"\b(?:sk|pk|rk|gh[pousr]|xox[baprs])[-_][A-Za-z0-9_=-]{16,}\b"
+    r"\b(?:(?:sk|pk|rk|gh[pousr]|xox[baprs]|glpat|npm|pypi)[-_][A-Za-z0-9_=-]{16,}"
+    r"|github_pat_[A-Za-z0-9_]{16,}"
+    r"|AKIA[0-9A-Z]{16,})\b"
 )
 _BEARER_RE = re.compile(r"\bBearer\s+([A-Za-z0-9._~+/=-]{16,})", re.IGNORECASE)
 _PRIVATE_KEY_RE = re.compile(

@@ -665,3 +665,66 @@ def test_model_input_source_preserves_detection_and_masks_evidence() -> None:
     assert "api_key" in _types(result)
     assert secret not in str(result)
     assert "redacted_text" not in result
+
+
+@pytest.mark.parametrize(
+    ("positive", "negative"),
+    [
+        # GitHub fine-grained personal access token (github_pat_ + 22+ chars).
+        (
+            "github_pat_11ABCDEFG0abcdefghijabcdefghij1234567890ABCDEFGHIJKL",
+            "github_pat_short",
+        ),
+        ("glpat-abcdefghijklmnopqrst", "glpat-short"),
+        ("pypi-AgEIcHlwcm90ZWN0aW9uX3Rva2VuX2hlcmU", "pypi-index"),
+        ("npm_abcdefghijklmnopqrstuvwxyz", "npm_short"),
+        # The canonical AWS documentation example key; published, not live.
+        ("AKIAIOSFODNN7EXAMPLE", "AKIAshort"),
+    ],
+)
+def test_canonical_ci_cd_and_cloud_token_prefixes_are_detected(
+    positive: str, negative: str
+) -> None:
+    result = _scan(positive)
+    assert result["verdict"] == "deny"
+    assert "api_key" in _types(result)
+
+    result = _scan(negative)
+    assert "api_key" not in _types(result)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A word character directly before the prefix disqualifies the match,
+        # and prefixes below the length floor never become findings.
+        "wordglpat-abcdefghijklmnopqrstuvwxyz",
+        "xnpm_abcdefghijklmnopqrstuvwxyz",
+        "myAKIAIOSFODNN7EXAMPLE",
+        "glpat-abc",
+    ],
+)
+def test_token_prefixes_respect_word_boundaries_and_minima(text: str) -> None:
+    result = _scan(text)
+    assert "api_key" not in _types(result)
+
+
+def test_github_pat_candidates_keep_full_spans_past_the_floor() -> None:
+    token = f"github_pat_{'C' * 90}"
+    result = _scan(token, raw_evidence=True)
+
+    api_keys = [f for f in result["findings"] if f["type"] == "api_key"]
+    assert len(api_keys) == 1
+    assert api_keys[0]["span"] == {"start": 0, "end": len(token)}
+    assert api_keys[0]["raw_evidence"] == token
+
+
+def test_repeated_embedded_token_prefixes_reach_the_trailing_credential() -> None:
+    token = f"sk-{'B' * 32}"
+    text = f"x{'github_pat_' * 32_000} {token}"
+    result = _scan(text)
+
+    api_keys = [f for f in result["findings"] if f["type"] == "api_key"]
+    start = text.find("sk-")
+    assert len(api_keys) == 1
+    assert api_keys[0]["span"] == {"start": start, "end": start + len(token)}

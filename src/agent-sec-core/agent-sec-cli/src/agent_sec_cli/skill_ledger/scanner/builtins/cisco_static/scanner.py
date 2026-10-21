@@ -96,6 +96,19 @@ _SECRET_FILE_NAMES = frozenset(
         "id_rsa",
     }
 )
+# Extensions that denote private-key material by convention (a `ppk` is
+# PuTTYgen's private-key format). They sit outside `_TEXT_EXTENSIONS`, so
+# without a dedicated finding such files would pass the static scanner
+# entirely even though they are exactly the credential class the scan exists
+# to catch.
+_PRIVATE_KEY_EXTENSIONS = frozenset({".key", ".ppk"})
+# Extensions that may hold private-key material but just as often hold only
+# public certificates: `cert.pem` chains, JKS truststores, and
+# `openssl pkcs12 -export -nokeys` archives share these extensions with their
+# private-key counterparts, so the extension alone cannot establish that the
+# file is a credential. Public certificate material (.crt/.cer/.der) is
+# deliberately absent from both sets.
+_KEYSTORE_EXTENSIONS = frozenset({".jks", ".keystore", ".p12", ".pem", ".pfx"})
 _ALLOWED_HIDDEN_FILE_PATHS = frozenset(
     {
         # OpenClaw ClawHub installs record per-skill origin metadata here.
@@ -402,35 +415,78 @@ def _scan_path_metadata(
 ) -> None:
     """Scan file names and extensions for static risk signals."""
     parts = Path(rel_path).parts
-    if any(part.startswith(".") for part in parts):
-        if path.name in _SECRET_FILE_NAMES:
-            findings.append(
-                _finding(
-                    rule="secret-material-file",
-                    severity="high",
-                    message="Skill contains a file name commonly used for secrets or credentials.",
-                    file=rel_path,
-                    metadata={
-                        "category": "credential_access",
-                        "title": "Credential-like file included",
-                        "remediation": "Remove secrets and credential files from the Skill package.",
-                    },
-                )
+    if path.name in _SECRET_FILE_NAMES:
+        findings.append(
+            _finding(
+                rule="secret-material-file",
+                severity="high",
+                message="Skill contains a file name commonly used for secrets or credentials.",
+                file=rel_path,
+                metadata={
+                    "category": "credential_access",
+                    "title": "Credential-like file included",
+                    "remediation": "Remove secrets and credential files from the Skill package.",
+                },
             )
-        elif not _is_allowed_hidden_file_path(parts):
-            findings.append(
-                _finding(
-                    rule="hidden-file",
-                    severity="medium",
-                    message="Skill contains a hidden file or directory.",
-                    file=rel_path,
-                    metadata={
-                        "category": "filesystem",
-                        "title": "Hidden file included",
-                        "remediation": "Keep hidden files out of Skill packages unless they are documented and required.",
-                    },
-                )
+        )
+    elif any(part.startswith(".") for part in parts) and not _is_allowed_hidden_file_path(
+        parts
+    ):
+        findings.append(
+            _finding(
+                rule="hidden-file",
+                severity="medium",
+                message="Skill contains a hidden file or directory.",
+                file=rel_path,
+                metadata={
+                    "category": "filesystem",
+                    "title": "Hidden file included",
+                    "remediation": "Keep hidden files out of Skill packages unless they are documented and required.",
+                },
             )
+        )
+
+    # Extensions that denote private-key material by convention. An extension
+    # alone cannot distinguish key material from a public certificate, so the
+    # ambiguous keystore/certificate extensions are reported one level lower.
+    # Public certificate material (.crt, .cer, .der) stays unflagged.
+    if path.suffix.lower() in _PRIVATE_KEY_EXTENSIONS:
+        findings.append(
+            _finding(
+                rule="key-material-file",
+                severity="high",
+                message=(
+                    "Skill contains a file whose extension commonly denotes "
+                    "private-key material."
+                ),
+                file=rel_path,
+                metadata={
+                    "category": "credential_access",
+                    "title": "Private-key material included",
+                    "remediation": "Remove private keys from the Skill package.",
+                },
+            )
+        )
+    elif path.suffix.lower() in _KEYSTORE_EXTENSIONS:
+        findings.append(
+            _finding(
+                rule="keystore-file",
+                severity="medium",
+                message=(
+                    "Skill contains a file whose extension commonly denotes "
+                    "keystore or certificate material that may include private keys."
+                ),
+                file=rel_path,
+                metadata={
+                    "category": "credential_access",
+                    "title": "Keystore or certificate file included",
+                    "remediation": (
+                        "Remove keystores and key material from the Skill package "
+                        "unless it is a public certificate."
+                    ),
+                },
+            )
+        )
 
     if path.suffix.lower() in _SUSPICIOUS_BINARY_EXTENSIONS:
         findings.append(

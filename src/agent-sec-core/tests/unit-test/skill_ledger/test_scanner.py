@@ -849,6 +849,94 @@ class TestCiscoStaticScanner(unittest.TestCase):
             rules = {finding["rule"] for finding in findings}
             self.assertNotIn("undeclared-network-access", rules)
 
+    def test_secret_file_names_are_flagged_outside_hidden_directories(self):
+        rules = self._scan_rules(
+            {
+                "SKILL.md": "---\nname: t\ndescription: t\n---\n# t\n",
+                "keys/id_rsa": "ssh-rsa AAAA",
+                "id_ed25519": "opaque",
+            }
+        )
+        self.assertIn("secret-material-file", rules)
+
+    def test_key_material_extensions_are_flagged_high(self):
+        with TemporaryDirectory() as tmp:
+            skill = self._make_skill(
+                Path(tmp),
+                {
+                    "SKILL.md": "---\nname: t\ndescription: t\n---\n# t\n",
+                    "server.key": "-----BEGIN PRIVATE KEY-----",
+                    "identity.ppk": "PuTTY-User-Key",
+                },
+            )
+            findings = scan_cisco_static_skill(skill)
+        key_material = {
+            finding.get("file")
+            for finding in findings
+            if finding.get("rule") == "key-material-file"
+        }
+        self.assertEqual(key_material, {"server.key", "identity.ppk"})
+        self.assertTrue(
+            all(finding["level"] == "deny" for finding in findings if finding["rule"] == "key-material-file")
+        )
+
+    def test_keystore_extensions_are_flagged_medium(self):
+        with TemporaryDirectory() as tmp:
+            skill = self._make_skill(
+                Path(tmp),
+                {
+                    "SKILL.md": "---\nname: t\ndescription: t\n---\n# t\n",
+                    "wallet.pfx": "opaque",
+                    "backup.p12": "opaque",
+                    "truststore.jks": "opaque",
+                    "app.keystore": "opaque",
+                    "cert.pem": "-----BEGIN CERTIFICATE-----",
+                },
+            )
+            findings = scan_cisco_static_skill(skill)
+        keystore = {
+            finding.get("file")
+            for finding in findings
+            if finding.get("rule") == "keystore-file"
+        }
+        self.assertEqual(
+            keystore,
+            {"wallet.pfx", "backup.p12", "truststore.jks", "app.keystore", "cert.pem"},
+        )
+        self.assertTrue(
+            all(finding["level"] == "warn" for finding in findings if finding["rule"] == "keystore-file")
+        )
+
+    def test_public_certificate_material_stays_unflagged(self):
+        rules = self._scan_rules(
+            {
+                "SKILL.md": "---\nname: t\ndescription: t\n---\n# t\n",
+                "public.crt": "-----BEGIN CERTIFICATE-----",
+                "server.cer": "-----BEGIN CERTIFICATE-----",
+                "ca.der": "opaque",
+            }
+        )
+        self.assertNotIn("key-material-file", rules)
+        self.assertNotIn("keystore-file", rules)
+        self.assertNotIn("secret-material-file", rules)
+
+    def test_hidden_dot_env_reports_secret_material_without_hidden_file(self):
+        with TemporaryDirectory() as tmp:
+            skill = self._make_skill(
+                Path(tmp),
+                {
+                    "SKILL.md": "---\nname: t\ndescription: t\n---\n# t\n",
+                    ".env": "TOKEN=abc",
+                    ".github/workflows/ci.yml": "run: echo hi\n",
+                },
+            )
+            findings = scan_cisco_static_skill(skill)
+        by_file = {}
+        for finding in findings:
+            by_file.setdefault(finding.get("file"), set()).add(finding["rule"])
+        self.assertEqual(by_file.get(".env"), {"secret-material-file"})
+        self.assertEqual(by_file.get(".github/workflows/ci.yml"), {"hidden-file"})
+
 
 if __name__ == "__main__":
     unittest.main()

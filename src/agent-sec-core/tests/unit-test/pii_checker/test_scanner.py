@@ -665,3 +665,63 @@ def test_model_input_source_preserves_detection_and_masks_evidence() -> None:
     assert "api_key" in _types(result)
     assert secret not in str(result)
     assert "redacted_text" not in result
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "DB_PASSWORD=sup3rs3cretPw9",
+        "MYSQL_ROOT_PASSWORD=anotherLongSecret1",
+        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI7TESTKEY2",
+        "GITHUB_TOKEN=compoundSessionValue9",
+        "SESSION_TOKEN=compoundSessionValue9",
+        "SECRET_KEY=django-insecure-example-key",
+        "PRIVATE_KEY=unencryptedkeymaterial1",
+        "AUTH_TOKEN=neutralAlphanumeric12",
+        "access_token=ya29.examplevalues123",
+        "redis_password=replica-auth-secret9",
+    ],
+)
+def test_compound_secret_field_names_are_detected(text: str) -> None:
+    result = _scan(text)
+    assert result["verdict"] == "deny"
+    assert "generic_secret_field" in _types(result)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "MAX_TOKEN_LIFETIME=3600",
+        "TOKEN_LIFETIME=3600",
+        "PASSWORD_MIN_LENGTH=12",
+        "API_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+        "FOREIGN_KEY=customers_order_id",
+        "mypassword=hunter2secret9",
+    ],
+)
+def test_compound_field_matching_stays_anchored_to_secret_tails(text: str) -> None:
+    result = _scan(text)
+    assert "generic_secret_field" not in _types(result)
+
+
+def test_bare_secret_field_label_stays_verbatim() -> None:
+    result = _scan('password = "Tr0ub4dor&3x"')
+    finding = next(f for f in result["findings"] if f["type"] == "generic_secret_field")
+    assert finding["metadata"]["field"] == "password"
+
+
+def test_compound_field_labels_never_re_expose_the_matched_name() -> None:
+    result = _scan("sk_live_abcdefghijklmnop_PASSWORD=abcdefghijklmno9")
+    finding = next(f for f in result["findings"] if f["type"] == "generic_secret_field")
+    assert finding["metadata"]["field"] == "..._PASSWORD"
+    assert "sk_live_abcdefghijklmnop" not in str(result)
+
+
+def test_compound_prefix_scanning_is_bounded_on_segmented_hyphen_runs() -> None:
+    segmented = "seg-" * 50_000
+
+    result = _scan(f"{segmented}tail_TOKEN=abcdefghijklmno9")
+    assert "generic_secret_field" in _types(result)
+
+    result = _scan(f"{segmented}tail_LIFETIME=abcdefghijklmno9")
+    assert "generic_secret_field" not in _types(result)
